@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Occlusion Flashcard Maker</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  *:focus-visible { outline: 3px solid #3b82f6; outline-offset: 2px; }
+  #img-canvas { cursor: crosshair; }
+  #img-canvas.test-mode { cursor: pointer; }
+  .box-revealed { opacity: 0 !important; }
+</style>
+</head>
+<body class="bg-indigo-50 min-h-screen py-8 px-4">
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-3xl font-bold text-gray-800 mb-2 text-center">Image Occlusion Flashcard Maker</h1>
+  <p class="text-center text-gray-500 mb-6">Upload an image, draw boxes to hide regions, then test yourself by revealing them</p>
+
+  <!-- Top Controls -->
+  <div class="bg-white rounded-2xl shadow p-5 mb-5">
+    <div class="flex flex-wrap gap-3 items-center">
+      <label class="flex-1 min-w-[180px]">
+        <span class="sr-only">Upload image</span>
+        <input type="file" id="img-upload" accept="image/*" class="hidden" onchange="loadImage(event)" />
+        <button onclick="document.getElementById('img-upload').click()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
+          Upload Image
+        </button>
+      </label>
+      <!-- Mode toggle -->
+      <div class="flex rounded-lg overflow-hidden border border-gray-200">
+        <button id="tab-edit" onclick="setMode('edit')" class="px-4 py-2 text-sm font-medium bg-indigo-600 text-white transition-colors">Edit</button>
+        <button id="tab-test" onclick="setMode('test')" class="px-4 py-2 text-sm font-medium bg-white text-gray-600 hover:bg-gray-50 transition-colors">Test</button>
+      </div>
+      <!-- Save/Load -->
+      <input type="text" id="set-name" placeholder="Set name..." class="flex-1 min-w-[120px] border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400 transition" />
+      <button onclick="saveSet()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">Save Set</button>
+    </div>
+    <!-- Saved sets -->
+    <div id="saved-sets" class="mt-3"></div>
+  </div>
+
+  <!-- Canvas Area -->
+  <div class="bg-white rounded-2xl shadow p-5 mb-5">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex gap-2 items-center">
+        <span id="mode-badge" class="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full">EDIT MODE</span>
+        <span id="box-count" class="text-sm text-gray-500">0 boxes</span>
+      </div>
+      <div class="flex gap-2">
+        <button id="hint-btn" onclick="revealHint()" class="hidden text-sm bg-yellow-100 hover:bg-yellow-200 text-yellow-700 px-3 py-1.5 rounded-lg transition-colors">Hint</button>
+        <button onclick="clearBoxes()" class="text-sm bg-red-100 hover:bg-red-200 text-red-600 px-3 py-1.5 rounded-lg transition-colors">Clear All</button>
+      </div>
+    </div>
+    <!-- No image placeholder -->
+    <div id="no-image-msg" class="flex flex-col items-center justify-center h-64 border-2 border-dashed border-gray-300 rounded-xl text-gray-400">
+      <svg class="w-12 h-12 mb-3 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+      <p class="font-medium">Upload an image to start</p>
+      <p class="text-xs mt-1">Anatomy diagrams, maps, charts — anything works</p>
+    </div>
+    <!-- Canvas wrapper -->
+    <div id="canvas-wrap" class="hidden relative overflow-auto" style="max-height:520px">
+      <canvas id="img-canvas" aria-label="Image with occlusion boxes" role="img"></canvas>
+      <svg id="box-overlay" class="absolute inset-0" style="pointer-events:none"></svg>
+    </div>
+    <!-- Label input for new box -->
+    <div id="label-input-wrap" class="hidden mt-3 flex gap-2">
+      <input type="text" id="box-label" placeholder="Label (optional)..." class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-400 transition" onkeydown="if(event.key==='Enter')confirmBox()" />
+      <button onclick="confirmBox()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors">Add Box</button>
+      <button onclick="cancelBox()" class="bg-gray-200 hover:bg-gray-300 text-gray-600 px-4 py-2 rounded-lg text-sm transition-colors">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Test Progress -->
+  <div id="test-progress-panel" class="hidden bg-white rounded-2xl shadow p-5 mb-5">
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-sm font-semibold text-gray-700">Progress</span>
+      <span id="test-progress-text" class="text-sm text-gray-500"></span>
+    </div>
+    <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+      <div id="test-progress-bar" class="bg-indigo-500 h-3 rounded-full transition-all duration-300" style="width:0%"></div>
+    </div>
+    <div class="flex gap-3 mt-3">
+      <button onclick="revealAll()" class="flex-1 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 py-2 rounded-lg text-sm font-medium transition-colors">Reveal All</button>
+      <button onclick="resetTest()" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-600 py-2 rounded-lg text-sm font-medium transition-colors">Reset</button>
+    </div>
+    <p class="text-xs text-gray-400 mt-2 text-center">Press <kbd class="bg-gray-100 px-1 rounded">Enter</kbd> to reveal next box</p>
+  </div>
+</div>
+
+<script>
+let imgDataURL = null;
+let imgEl = null;
+let boxes = []; // {x, y, w, h, label, revealed}
+let drawMode = 'edit'; // 'edit' | 'test'
+let drawing = false;
+let startX, startY, pendingBox = null;
+const canvas = document.getElementById('img-canvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('box-overlay');
+
+function loadImage(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    imgDataURL = ev.target.result;
+    imgEl = new Image();
+    imgEl.onload = () => {
+      const maxW = Math.min(700, imgEl.width);
+      const scale = maxW / imgEl.width;
+      canvas.width = Math.round(imgEl.width * scale);
+      canvas.height = Math.round(imgEl.height * scale);
+      overlay.setAttribute('width', canvas.width);
+      overlay.setAttribute('height', canvas.height);
+      overlay.style.width = canvas.width + 'px';
+      overlay.style.height = canvas.height + 'px';
+      document.getElementById('no-image-msg').classList.add('hidden');
+      document.getElementById('canvas-wrap').classList.remove('hidden');
+      canvas.setAttribute('aria-label', 'Uploaded image with occlusion boxes');
+      redraw();
+    };
+    imgEl.src = imgDataURL;
+  };
+  reader.readAsDataURL(file);
+}
+
+function redraw() {
+  if (!imgEl) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+  renderBoxes();
+}
+
+function renderBoxes() {
+  overlay.innerHTML = '';
+  boxes.forEach((b, i) => {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', b.x); rect.setAttribute('y', b.y);
+    rect.setAttribute('width', b.w); rect.setAttribute('height', b.h);
+    rect.setAttribute('rx', '4');
+    rect.setAttribute('fill', b.revealed ? 'rgba(34,197,94,0.2)' : '#ef4444');
+    rect.setAttribute('stroke', b.revealed ? '#22c55e' : '#b91c1c');
+    rect.setAttribute('stroke-width', '2');
+    if (drawMode === 'test' && !b.revealed) {
+      rect.style.pointerEvents = 'all';
+      rect.style.cursor = 'pointer';
+      rect.onclick = () => revealBox(i);
+    }
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', b.x + b.w/2); label.setAttribute('y', b.y + b.h/2 + 5);
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('fill', 'white');
+    label.setAttribute('font-size', '13');
+    label.setAttribute('font-weight', 'bold');
+    label.setAttribute('pointer-events', 'none');
+    if (b.revealed) { label.textContent = b.label || '✓'; label.setAttribute('fill', '#15803d'); }
+    else { label.textContent = b.label ? b.label.charAt(0).toUpperCase() : (i+1).toString(); }
+
+    g.appendChild(rect); g.appendChild(label);
+
+    // Edit mode: delete button
+    if (drawMode === 'edit') {
+      const del = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      del.setAttribute('x', b.x + b.w - 4); del.setAttribute('y', b.y + 13);
+      del.setAttribute('text-anchor', 'end'); del.setAttribute('fill', 'white');
+      del.setAttribute('font-size', '14'); del.setAttribute('font-weight', 'bold');
+      del.textContent = '×'; del.style.cursor = 'pointer'; del.style.pointerEvents = 'all';
+      del.onclick = (e) => { e.stopPropagation(); boxes.splice(i, 1); redraw(); updateBoxCount(); };
+      del.setAttribute('aria-label', `Delete box ${i+1}`);
+      g.appendChild(del);
+    }
+    overlay.appendChild(g);
+  });
+  updateBoxCount();
+  updateTestProgress();
+}
+
+// Draw events
+canvas.addEventListener('mousedown', e => {
+  if (drawMode !== 'edit') return;
+  const r = canvas.getBoundingClientRect();
+  startX = e.clientX - r.left; startY = e.clientY - r.top;
+  drawing = true;
+});
+
+canvas.addEventListener('mousemove', e => {
+  if (!drawing) return;
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  redraw();
+  ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
+  ctx.strokeRect(Math.min(startX,x), Math.min(startY,y), Math.abs(x-startX), Math.abs(y-startY));
+  ctx.setLineDash([]);
+});
+
+canvas.addEventListener('mouseup', e => {
+  if (!drawing) return; drawing = false;
+  const r = canvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const w = Math.abs(x - startX), h = Math.abs(y - startY);
+  if (w < 10 || h < 10) { redraw(); return; }
+  pendingBox = { x: Math.min(startX,x), y: Math.min(startY,y), w, h, label: '', revealed: false };
+  document.getElementById('label-input-wrap').classList.remove('hidden');
+  document.getElementById('box-label').focus();
+  redraw();
+});
+
+// Touch support
+canvas.addEventListener('touchstart', e => {
+  if (drawMode !== 'edit') return;
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect(), t = e.touches[0];
+  startX = t.clientX - r.left; startY = t.clientY - r.top; drawing = true;
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  if (!drawing) return; e.preventDefault();
+  const r = canvas.getBoundingClientRect(), t = e.touches[0];
+  const x = t.clientX - r.left, y = t.clientY - r.top;
+  redraw();
+  ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.setLineDash([4,3]);
+  ctx.strokeRect(Math.min(startX,x), Math.min(startY,y), Math.abs(x-startX), Math.abs(y-startY));
+  ctx.setLineDash([]);
+}, { passive: false });
+canvas.addEventListener('touchend', e => {
+  if (!drawing) return; drawing = false; e.preventDefault();
+  const t = e.changedTouches[0], r = canvas.getBoundingClientRect();
+  const x = t.clientX - r.left, y = t.clientY - r.top;
+  const w = Math.abs(x-startX), h = Math.abs(y-startY);
+  if (w < 10 || h < 10) { redraw(); return; }
+  pendingBox = { x: Math.min(startX,x), y: Math.min(startY,y), w, h, label: '', revealed: false };
+  document.getElementById('label-input-wrap').classList.remove('hidden');
+  document.getElementById('box-label').focus();
+  redraw();
+}, { passive: false });
+
+function confirmBox() {
+  if (!pendingBox) return;
+  pendingBox.label = document.getElementById('box-label').value.trim();
+  boxes.push({ ...pendingBox });
+  pendingBox = null;
+  document.getElementById('box-label').value = '';
+  document.getElementById('label-input-wrap').classList.add('hidden');
+  redraw();
+}
+
+function cancelBox() {
+  pendingBox = null;
+  document.getElementById('label-input-wrap').classList.add('hidden');
+  redraw();
+}
+
+function clearBoxes() {
+  boxes = []; redraw();
+}
+
+function setMode(m) {
+  drawMode = m;
+  ['edit','test'].forEach(tab => {
+    document.getElementById(`tab-${tab}`).className = `px-4 py-2 text-sm font-medium transition-colors ${tab===m ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`;
+  });
+  document.getElementById('mode-badge').textContent = m === 'edit' ? 'EDIT MODE' : 'TEST MODE';
+  document.getElementById('hint-btn').classList.toggle('hidden', m === 'edit');
+  document.getElementById('test-progress-panel').classList.toggle('hidden', m === 'edit');
+  document.getElementById('label-input-wrap').classList.add('hidden');
+  canvas.className = m === 'test' ? 'test-mode' : '';
+  if (m === 'test') resetTest();
+  redraw();
+}
+
+function revealBox(i) {
+  if (boxes[i]) { boxes[i].revealed = true; renderBoxes(); }
+}
+
+function revealHint() {
+  const unrevealed = boxes.map((b,i) => i).filter(i => !boxes[i].revealed);
+  if (unrevealed.length) { revealBox(unrevealed[0]); }
+}
+
+function revealAll() { boxes.forEach(b => b.revealed = true); renderBoxes(); }
+function resetTest() { boxes.forEach(b => b.revealed = false); renderBoxes(); }
+
+function updateBoxCount() {
+  document.getElementById('box-count').textContent = boxes.length + ' box' + (boxes.length !== 1 ? 'es' : '');
+}
+
+function updateTestProgress() {
+  if (drawMode !== 'test') return;
+  const total = boxes.length;
+  const revealed = boxes.filter(b => b.revealed).length;
+  const pct = total ? Math.round(revealed/total*100) : 0;
+  document.getElementById('test-progress-text').textContent = `${revealed} / ${total} revealed`;
+  document.getElementById('test-progress-bar').style.width = pct + '%';
+}
+
+// Keyboard shortcut
+document.addEventListener('keydown', e => {
+  if (drawMode === 'test' && e.key === 'Enter') {
+    const unrevealed = boxes.map((b,i) => i).filter(i => !boxes[i].revealed);
+    if (unrevealed.length) revealBox(unrevealed[0]);
+  }
+});
+
+// Save / Load
+function saveSet() {
+  const name = document.getElementById('set-name').value.trim();
+  if (!name || !imgDataURL) { alert('Enter a set name and upload an image first.'); return; }
+  try {
+    const sets = JSON.parse(localStorage.getItem('occlusion_sets') || '{}');
+    sets[name] = { imgDataURL, boxes: boxes.map(b => ({ ...b, revealed: false })) };
+    localStorage.setItem('occlusion_sets', JSON.stringify(sets));
+    document.getElementById('set-name').value = '';
+    renderSavedSets();
+    alert('Set saved!');
+  } catch(e) { alert('Could not save (storage may be full due to large image).'); }
+}
+
+function loadSet(name) {
+  try {
+    const sets = JSON.parse(localStorage.getItem('occlusion_sets') || '{}');
+    const data = sets[name];
+    if (!data) return;
+    imgDataURL = data.imgDataURL;
+    boxes = data.boxes.map(b => ({ ...b, revealed: false }));
+    imgEl = new Image();
+    imgEl.onload = () => {
+      const maxW = Math.min(700, imgEl.width);
+      const scale = maxW / imgEl.width;
+      canvas.width = Math.round(imgEl.width * scale);
+      canvas.height = Math.round(imgEl.height * scale);
+      overlay.setAttribute('width', canvas.width); overlay.setAttribute('height', canvas.height);
+      overlay.style.width = canvas.width + 'px'; overlay.style.height = canvas.height + 'px';
+      document.getElementById('no-image-msg').classList.add('hidden');
+      document.getElementById('canvas-wrap').classList.remove('hidden');
+      redraw();
+    };
+    imgEl.src = imgDataURL;
+  } catch(e) {}
+}
+
+function deleteSet(name) {
+  try {
+    const sets = JSON.parse(localStorage.getItem('occlusion_sets') || '{}');
+    delete sets[name];
+    localStorage.setItem('occlusion_sets', JSON.stringify(sets));
+    renderSavedSets();
+  } catch(e) {}
+}
+
+function renderSavedSets() {
+  const div = document.getElementById('saved-sets');
+  div.innerHTML = '';
+  try {
+    const sets = JSON.parse(localStorage.getItem('occlusion_sets') || '{}');
+    const keys = Object.keys(sets);
+    if (!keys.length) return;
+    div.innerHTML = '<p class="text-xs text-gray-500 mb-2 mt-2">Saved Sets:</p>';
+    keys.forEach(name => {
+      const row = document.createElement('div');
+      row.className = 'flex items-center justify-between bg-indigo-50 rounded-lg px-3 py-1.5 mb-1';
+      row.innerHTML = `
+        <button onclick='loadSet("${name.replace(/"/g,'&quot;')}")' class="text-sm text-indigo-700 font-medium hover:text-indigo-900 transition-colors">${name} (${sets[name].boxes?.length || 0} boxes)</button>
+        <button onclick='deleteSet("${name.replace(/"/g,'&quot;')}")' class="text-gray-400 hover:text-red-500 transition-colors text-sm">✕</button>
+      `;
+      div.appendChild(row);
+    });
+  } catch(e) {}
+}
+
+renderSavedSets();
+</script>
+</body>
+</html>
